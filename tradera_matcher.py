@@ -10,12 +10,16 @@ import time
 import concurrent.futures
 import webbrowser
 import uuid
+import os
+import json
+
+AUTOSAVE_FILE = os.path.join(os.path.expanduser("~"), ".tradera_last_list.json")
 
 class TraderaApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Tradera Movie Matcher")
-        self.root.geometry("850x700") 
+        self.root.geometry("850x800") 
         
         style = ttk.Style()
         if 'clam' in style.theme_names():
@@ -41,6 +45,15 @@ class TraderaApp:
         
         self.search_btn = ttk.Button(btn_frame, text="🔍 Hitta Säljare", command=self.start_search)
         self.search_btn.pack(side=tk.RIGHT)
+
+        # Maxpris-filter
+        max_frame = ttk.Frame(main_frame)
+        max_frame.pack(fill=tk.X, pady=(5, 0))
+
+        ttk.Label(max_frame, text="Maxpris (kr):", font=("Ubuntu", 10, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        self.max_price_var = tk.StringVar()
+        self.max_price_entry = ttk.Entry(max_frame, textvariable=self.max_price_var, width=10, font=("Ubuntu", 11))
+        self.max_price_entry.pack(side=tk.LEFT)
         
         self.status_var = tk.StringVar(value="Status: Redo")
         self.status_label = ttk.Label(main_frame, textvariable=self.status_var, font=("Ubuntu", 10, "italic"), foreground="#555555")
@@ -51,6 +64,151 @@ class TraderaApp:
         
         self.output_text = scrolledtext.ScrolledText(main_frame, height=15, width=80, font=("Ubuntu", 11), state=tk.DISABLED)
         self.output_text.pack(fill=tk.BOTH, expand=True)
+
+        # --- SÖKRUTA FÖR RESULTAT ---
+        search_frame = ttk.Frame(main_frame)
+        search_frame.pack(fill=tk.X, pady=(8, 0))
+
+        ttk.Label(search_frame, text="🔎 Sök i resultat:", font=("Ubuntu", 10, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.filter_var = tk.StringVar()
+        self.filter_var.trace_add("write", self._on_filter_change)
+        self.filter_entry = ttk.Entry(search_frame, textvariable=self.filter_var, width=35, font=("Ubuntu", 11))
+        self.filter_entry.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.match_label = ttk.Label(search_frame, text="", font=("Ubuntu", 10), foreground="#555555")
+        self.match_label.pack(side=tk.LEFT)
+
+        self.prev_btn = ttk.Button(search_frame, text="▲", width=3, command=self._prev_match)
+        self.prev_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.next_btn = ttk.Button(search_frame, text="▼", width=3, command=self._next_match)
+        self.next_btn.pack(side=tk.LEFT, padx=(2, 0))
+
+        clear_btn = ttk.Button(search_frame, text="✕ Rensa", command=self._clear_filter)
+        clear_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Konfigurera highlight-taggar
+        self.output_text.tag_config("highlight", background="#ffeb3b", foreground="#000000")
+        self.output_text.tag_config("highlight_current", background="#ff9800", foreground="#000000")
+
+        self._match_positions = []  # lista av (start_pos, end_pos)
+        self._current_match = -1   # index i listan
+
+        # Enter/Shift+Enter för snabb navigering
+        self.filter_entry.bind("<Return>", lambda e: self._next_match())
+        self.filter_entry.bind("<Shift-Return>", lambda e: self._prev_match())
+
+        # Ladda senaste listan automatiskt
+        self._load_autosave()
+
+    # ---- Filter-logik ----
+
+    def _on_filter_change(self, *args):
+        query = self.filter_var.get().strip()
+
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.tag_remove("highlight", "1.0", tk.END)
+        self.output_text.tag_remove("highlight_current", "1.0", tk.END)
+        self._match_positions = []
+        self._current_match = -1
+
+        if not query:
+            self.match_label.config(text="")
+            self.output_text.config(state=tk.DISABLED)
+            return
+
+        full_text = self.output_text.get("1.0", tk.END)
+        query_lower = query.lower()
+        text_lower = full_text.lower()
+
+        search_from = 0
+        while True:
+            idx = text_lower.find(query_lower, search_from)
+            if idx == -1:
+                break
+
+            before = full_text[:idx]
+            line = before.count('\n') + 1
+            col = idx - before.rfind('\n') - 1
+
+            start_pos = f"{line}.{col}"
+            end_pos = f"{line}.{col + len(query)}"
+
+            self.output_text.tag_add("highlight", start_pos, end_pos)
+            self._match_positions.append((start_pos, end_pos))
+            search_from = idx + len(query)
+
+        self.output_text.config(state=tk.DISABLED)
+
+        count = len(self._match_positions)
+        if count == 0:
+            self.match_label.config(text="Ingen matchning", foreground="#cc0000")
+        else:
+            self._current_match = 0
+            self._highlight_current()
+
+    def _highlight_current(self):
+        if not self._match_positions:
+            return
+
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.tag_remove("highlight_current", "1.0", tk.END)
+
+        start_pos, end_pos = self._match_positions[self._current_match]
+        self.output_text.tag_add("highlight_current", start_pos, end_pos)
+        self.output_text.see(start_pos)
+        self.output_text.config(state=tk.DISABLED)
+
+        total = len(self._match_positions)
+        self.match_label.config(
+            text=f"{self._current_match + 1} / {total}",
+            foreground="#007700"
+        )
+
+    def _next_match(self):
+        if not self._match_positions:
+            return
+        self._current_match = (self._current_match + 1) % len(self._match_positions)
+        self._highlight_current()
+
+    def _prev_match(self):
+        if not self._match_positions:
+            return
+        self._current_match = (self._current_match - 1) % len(self._match_positions)
+        self._highlight_current()
+
+    def _clear_filter(self):
+        self.filter_var.set("")
+        self._match_positions = []
+        self._current_match = -1
+        self.match_label.config(text="")
+        self.filter_entry.focus_set()
+
+    # ---- Filter-logik ----
+
+    def _save_autosave(self):
+        try:
+            movies_text = self.input_text.get("1.0", tk.END).strip()
+            with open(AUTOSAVE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"movies": movies_text}, f)
+        except Exception:
+            pass
+
+    def _load_autosave(self):
+        try:
+            if os.path.exists(AUTOSAVE_FILE):
+                with open(AUTOSAVE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                movies_text = data.get("movies", "").strip()
+                if movies_text:
+                    self.input_text.delete("1.0", tk.END)
+                    self.input_text.insert(tk.END, movies_text)
+                    self.status_var.set("Status: Senaste listan laddades automatiskt")
+        except Exception:
+            pass
+
+    # ---- Övriga metoder (oförändrade) ----
 
     def save_search(self):
         movies_text = self.input_text.get("1.0", tk.END).strip()
@@ -86,6 +244,7 @@ class TraderaApp:
                 self.input_text.delete("1.0", tk.END)
                 self.input_text.insert(tk.END, movies_text)
                 self.status_var.set(f"Status: Laddade lista från {filepath}")
+                self._save_autosave()
             except Exception as e:
                 messagebox.showerror("Fel vid laddning", f"Kunde inte ladda filen:\n{e}")
 
@@ -103,7 +262,18 @@ class TraderaApp:
         if len(movies) < 1:
             messagebox.showwarning("Inmatningsfel", "Vänligen ange minst en filmtitel att söka efter.")
             return
+
+        max_price_raw = self.max_price_var.get().strip()
+        if max_price_raw:
+            if not re.fullmatch(r"\d+", max_price_raw):
+                messagebox.showwarning("Inmatningsfel", "Maxpris måste vara ett heltal (kr).")
+                return
+            self.max_price = int(max_price_raw)
+        else:
+            self.max_price = None
             
+        self._save_autosave()
+
         self.search_btn.config(state=tk.DISABLED)
         self.load_btn.config(state=tk.DISABLED)
         self.save_btn.config(state=tk.DISABLED)
@@ -111,6 +281,7 @@ class TraderaApp:
         self.output_text.config(state=tk.NORMAL)
         self.output_text.delete("1.0", tk.END)
         self.output_text.config(state=tk.DISABLED)
+        self._clear_filter()
         
         thread = threading.Thread(target=self.run_search, args=(movies,))
         thread.daemon = True
@@ -162,10 +333,8 @@ class TraderaApp:
                         if img and img.get('alt'):
                             title = img.get('alt').strip()
                             
-                    # --- NY BÄTTRE PRIS-AVSNING ---
                     price = "Pris okänt"
                     
-                    # Klättra uppåt i HTML-trädet från länken tills vi hittar något som innehåller "kr"
                     container = a
                     for _ in range(5): 
                         if container.parent and container.parent.name not in ['body', 'html']:
@@ -174,9 +343,7 @@ class TraderaApp:
                                 break
                     
                     if container:
-                        # Rensa bort dolda html-mellanslag
                         c_text = container.text.replace('\xa0', ' ')
-                        # Fånga siffror (även med mellanslag typ 1 200) följt av kr
                         prices = re.findall(r'(\d+(?:[ ]\d+)*)\s*kr', c_text, re.IGNORECASE)
                         if prices:
                             price = prices[0].strip() + " kr"
@@ -211,7 +378,6 @@ class TraderaApp:
                             if not title:
                                 title = "Okänd titel"
                                 
-                            # Backup-koll för priset inne på själva annonsen
                             price = data['price']
                             if price == "Pris okänt":
                                 meta_price = item_soup.find('meta', property=re.compile(r'price:amount', re.IGNORECASE))
@@ -260,14 +426,40 @@ class TraderaApp:
         self.root.after(0, self.status_var.set, "Status: Sammanställer resultat...")
         self.compile_results(seller_inventory, movies)
 
+
     def compile_results(self, seller_inventory, all_movies):
+        def parse_price_kr(price_str):
+            if not price_str or price_str == "Pris okänt":
+                return None
+            m = re.search(r"(\d+(?:[ ]\d+)*)", price_str)
+            if not m:
+                return None
+            return int(m.group(1).replace(" ", ""))
+
         matches_found = 0
         self.update_result("--- SÖKRESULTAT ---\n\n")
-        
-        sorted_sellers = sorted(seller_inventory.items(), key=lambda x: len(x[1]), reverse=True)
+        if self.max_price is not None:
+            self.update_result(f"(Maxpris: {self.max_price} kr. Okänt pris visas.)\n\n")
+
+        # Filtrera bort filmer som överstiger maxpris (om angivet)
+        filtered_inventory = {}
+        for seller, movies_dict in seller_inventory.items():
+            for m_title, items in movies_dict.items():
+                kept_items = []
+                for item in items:
+                    if self.max_price is None:
+                        kept_items.append(item)
+                        continue
+                    price_val = parse_price_kr(item.get("price"))
+                    if price_val is None or price_val <= self.max_price:
+                        kept_items.append(item)
+                if kept_items:
+                    filtered_inventory.setdefault(seller, {})[m_title] = kept_items
+
+        sorted_sellers = sorted(filtered_inventory.items(), key=lambda x: len(x[1]), reverse=True)
         
         for seller, movies_dict in sorted_sellers:
-            if len(movies_dict) >= 1:
+            if len(movies_dict) >= 2:
                 matches_found += 1
                 self.update_result(f"👤 SÄLJARE: {seller} (Har {len(movies_dict)} av {len(all_movies)} sökta filmer)\n")
                 self.update_result("-" * 75 + "\n")
@@ -276,7 +468,6 @@ class TraderaApp:
                     self.update_result(f" 🎬 Sökning: '{m_title}' gav:\n")
                     for item in items:
                         clean_title = " ".join(item['title'].split())
-                        # Skriver ut ✅ [Titel] (Pris: XX kr)
                         self.update_result(f"     ✅ {clean_title}  (Pris: {item['price']})   ")
                         self.insert_link("[Öppna annons]", item['url'])
                         self.update_result("\n")
