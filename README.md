@@ -1,13 +1,13 @@
-***
-
-```markdown
 # Tradera Movie Matcher 🎬
 
 A Python-based desktop application built for Ubuntu/Linux that helps you find the best sellers on [Tradera.com](https://www.tradera.com) for your movie wishlist. 
 
+Made with https://aistudio.google.com.
+
 Instead of buying movies one by one and paying multiple shipping fees, this tool searches for your entire wishlist, cross-references the results, and sorts the sellers based on how many of your wanted movies they have in stock. 
 
-![Screenshot placeholder](https://via.placeholder.com/800x450.png?text=Add+a+screenshot+of+the+app+here)
+
+![Screenshot](https://github.com/bphermansson/TraderaMovieMatcher/blob/main/screenshot.png?raw=true)
 
 ## ✨ Features
 
@@ -66,5 +66,3 @@ This tool is created for educational purposes and personal use. Web scraping sho
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 ```
-
-***
