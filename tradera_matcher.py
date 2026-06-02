@@ -28,7 +28,7 @@ class TraderaApp:
         main_frame = ttk.Frame(root, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        input_label = ttk.Label(main_frame, text="1. Skriv in filmer (en titel per rad):", font=("Ubuntu", 11, "bold"))
+        input_label = ttk.Label(main_frame, text="1. Skriv in filmer (en titel per rad) eller ladda en textfil nedan:", font=("Ubuntu", 11, "bold"))
         input_label.pack(anchor="w", pady=(0, 5))
         
         self.input_text = scrolledtext.ScrolledText(main_frame, height=8, width=80, font=("Ubuntu", 11))
